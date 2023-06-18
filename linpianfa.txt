@@ -1,0 +1,284 @@
+#include<iostream>
+#include<cmath>
+#include<cstring>
+#include<fstream>
+#include<malloc.h>
+#include<stdlib.h>
+#include<time.h>
+using namespace std;
+#define V 1.0            //预设远场速度为1
+#define pi 3.141592654   //设置圆周率 
+#define r 1.0            //设置圆的半径为1 
+#define rad 0.00         //设置偏转角 
+
+int main ()
+{
+	int n;
+	cout<<"请输入所分面元数： ";
+	cin >> n;
+	//计时 
+	clock_t start,finish;
+    double totaltime;
+    start=clock();
+	//计算各鳞片点的起始和结束点 
+	double v0,v;
+	v0 = 2.0*pi/2.0/n;
+	v = 2.0*pi/n;
+	
+	//记录每个线源两端点的角度
+	double *wi = (double *)malloc((n+1)*sizeof(double));
+	wi[1]=pi+v0+rad;
+	for(int i=2;i<=n;i++)
+		{
+			wi[i]=wi[i-1]+v;
+		} 
+	
+	//记录每个端点的坐标。 	
+	//double sit[n+1][3]; 
+	double (*sit)[3]=(double(*)[3])malloc(sizeof(double)*(n+1)*3);	
+	for(int i=1;i<=n;i++)
+		{
+			sit[i][1]=r*cos(wi[i]);
+			sit[i][2]=r*sin(wi[i]);		
+		}	
+	//记录每个线源的两端点，设n到1个点组成第一个线源 
+	//1到2点组成第二个线源，以此类推。    
+	//double yy[n+1][5];
+	double (*yy)[5]=(double(*)[5])malloc(sizeof(double)*(n+1)*5);
+	yy[1][1]=sit[n][1];
+	yy[1][2]=sit[n][2];
+	yy[1][3]=sit[1][1];
+	yy[1][4]=sit[1][2];
+	for(int i=2;i<=n;i++)
+		{
+			yy[i][1]=sit[i-1][1];
+			yy[i][2]=sit[i-1][2];
+			yy[i][3]=sit[i][1];
+			yy[i][4]=sit[i][2];
+		}
+	//释放sit的内存 
+	free(sit);
+		
+	//计算第j片对第i片的影响
+	//double re[n+1][n+1][3];//记录第j片对第i片的影响；
+	double (*re)[n+1][3] = (double(*)[n+1][3])malloc(sizeof(double)*(n+1)*(n+1)*3); 	
+	double a;//计算论文中的a的值，即为局部坐标系x的坐标。 
+	a=pow((yy[1][1]-yy[1][3]),2)+pow((yy[1][2]-yy[1][4]),2);
+	a=(sqrt(a))/2.0;
+	
+	//算法核心之一，两线元之间的相互影响 
+	for(int i=1;i<=n;i++)
+		{
+			//计算i的中点坐标 
+			double zx[3]={'0'};
+			zx[1]=(yy[i][1]+yy[i][3])/2.0;
+			zx[2]=(yy[i][2]+yy[i][4])/2.0;
+			double cf[3]={'0'};
+			for(int j=1;j<=n;j++)
+				{
+					if(i!=j)
+					{
+					//计算j的中点坐标					
+					cf[1]=(yy[j][1]+yy[j][3])/2.0;
+					cf[2]=(yy[j][2]+yy[j][4])/2.0;					
+					//论文里的算法较为复杂，在这里
+					//用我自己想的转换方式.（基于线元端点的逆时针标号顺序）					
+					//j鳞片矢量化，全部按逆时针方向。
+					double fj[3]={'0'};
+					fj[1]=yy[j][3]-yy[j][1];
+					fj[2]=yy[j][4]-yy[j][2];
+					//j的中点到i的中点的向量为：
+					double gg[3]={'0'};
+					gg[1]=zx[1]-cf[1];
+					gg[2]=zx[2]-cf[2];
+					//可由向量乘法算出局部坐标的x,y;
+					double gf,gfx,gfy;
+					gf=gg[1]*fj[1]+gg[2]*fj[2];
+					gfx=gf/2.0/a;
+					gf=-1.0*cf[1]*gg[1]-cf[2]*gg[2];
+					gfy=gf/(sqrt(cf[1]*cf[1]+cf[2]*cf[2]));
+					//得出坐标以后即可进行单位源强度产生的扰动速度的计算
+					double vx,vy;
+					vx=1.0/4.0/pi*(log((gfx+a)*(gfx+a)+gfy*gfy)-log((gfx-a)*(gfx-a)+gfy*gfy));
+					vy=1.0/2.0/pi*(atan((gfx+a)/gfy)-atan((gfx-a)/gfy));
+					//转化为原直角坐标系得
+					double vvx,vvy;
+					vvx=fj[1]/2.0/a*vx+(-cf[1])/(sqrt(cf[1]*cf[1]+cf[2]*cf[2]))*vy;
+					vvy=fj[2]/2.0/a*vx+(-cf[2])/(sqrt(cf[1]*cf[1]+cf[2]*cf[2]))*vy;
+					re[i][j][1]=vvx;
+					re[i][j][2]=vvy;					
+					}	
+					
+				}
+		}	
+	//进而求出第j个鳞片对第i个的垂直和轴向速度
+	//double chre[n+1][n+1][3];
+	double (*chre)[n+1][3] = (double(*)[n+1][3])malloc(sizeof(double)*(n+1)*(n+1)*3); 
+	//chre[][][1]代表径向垂直力总和(向外为正)
+	//chre[][][2]代表轴向受力总和（逆时针为正）
+	for(int i=1;i<=n;i++)
+	{
+		//过第i个鳞片中点的径向向量和其自身方向矢量可以确定
+		double Vr[3],Vo[3],rlong;
+		//Vr垂直于鳞片中点向外的方向
+		//Vo为鳞片的轴向方向（逆时针为正）
+		Vo[1]=(yy[i][3]-yy[i][1])/a/2.0;
+		Vo[2]=(yy[i][4]-yy[i][2])/a/2.0;
+		Vr[1]=((yy[i][1]+yy[i][3])/2.0);
+		Vr[2]=((yy[i][2]+yy[i][4])/2.0);
+		rlong=sqrt(pow(Vr[1],2)+pow(Vr[2],2));
+		Vr[1]=Vr[1]/rlong;
+		Vr[2]=Vr[2]/rlong;
+		for(int j=1;j<=n;j++)
+		{
+			if(i!=j)
+			{
+				//按照矩阵相乘，矢量方向已经单位化，直接可得数值大小。
+				chre[i][j][1]=Vr[2]*re[i][j][2]+Vr[1]*re[i][j][1];
+				chre[i][j][2]=Vo[2]*re[i][j][2]+Vo[1]*re[i][j][1];			
+			}			
+		}
+	}
+	
+	//释放re
+	free(re); 
+	
+	//计算远场速度在鳞片上径向和轴向的分量
+	//double vre[n+1][3];
+	double (*vre)[3]=(double(*)[3])malloc(sizeof(double)*(n+1)*3);
+	//vre[][1]代表远场速度在径向的分量（向外为正）
+	//vre[][2]代表远场速度在轴向的分量（逆时针为正）
+	for(int i=1;i<=n;i++)
+	{
+		//过第i个鳞片中点的径向向量和其自身方向矢量可以确定
+		double Vr[3],Vo[3],rlong;
+		//Vr垂直于鳞片中点向外的方向
+		//Vo为鳞片的轴向方向（逆时针为正）
+		Vo[1]=(yy[i][3]-yy[i][1])/a/2.0;
+		Vo[2]=(yy[i][4]-yy[i][2])/a/2.0;
+		Vr[1]=((yy[i][1]+yy[i][3])/2.0);
+		Vr[2]=((yy[i][2]+yy[i][4])/2.0);
+		rlong=sqrt(pow(Vr[1],2)+pow(Vr[2],2));
+		Vr[1]=Vr[1]/rlong;
+		Vr[2]=Vr[2]/rlong;
+		vre[i][1]=Vr[1]*V;
+		vre[i][2]=Vo[1]*V;			
+	}	
+	//生成线性方程组对应的矩阵
+	//double matt[n+1][n+1];
+	double (*matt)[n+1]=(double(*)[n+1])malloc(sizeof(double)*(n+1)*(n+1));	
+	for(int i=1;i<=n;i++)
+	{
+		matt[i][i]=0.5;
+		for(int j=1;j<=n;j++)
+		{
+			if(i!=j)
+			{
+				matt[i][j]=chre[i][j][1];	
+			}			
+		}		
+	}	
+	//生成结果向量
+	//double resu[n+1];
+	double *resu = (double *)malloc((n+1)*sizeof(double));
+	for(int i=1;i<=n;i++)
+	{
+		resu[i]=-1.0*vre[i][1];
+	}
+	//因行列式除对角线元素为0.5，n大于10时其他的远小于0.5
+	//可直接采取高斯消元法求解
+	for(int i=1;i<n;i++)
+	{		
+		for(int j=i+1;j<=n;j++)
+		{
+			double bb=0.0;
+			bb=matt[j][i]/matt[i][i];
+			for(int k=i;k<=n;k++)
+			{
+				matt[j][k]=matt[j][k]-matt[i][k]*bb;		
+			}
+			resu[j]=resu[j]-resu[i]*bb;			
+		}	
+	}
+	
+
+	//计算每个鳞片的强度
+	//double x[n+1];
+	double *x = (double *)malloc((n+1)*sizeof(double));
+	for(int i=n;i>=1;i--)
+	{
+		x[i]=resu[i];
+		for(int j=n;j>i;j--)
+		{
+			x[i]=x[i]-matt[i][j]*x[j];
+		}
+		x[i]=x[i]/matt[i][i];		
+	}
+	//释放ruse,matt 
+	free(resu);
+	free(matt);	
+	//求每个鳞片的表面速度
+	//double Voo[n+1];
+	double *Voo = (double *)malloc((n+1)*sizeof(double));
+	for(int i=1;i<=n;i++)
+	{
+		Voo[i]=0.0;
+		for(int j=1;j<=n;j++)
+		{
+			if(i!=j)
+			{
+				Voo[i]=Voo[i]+x[j]*chre[i][j][2];
+			}		
+		}
+		Voo[i]=Voo[i]+vre[i][2];	
+	}
+	
+	//释放vre,x 
+	free(vre);
+	free(x);
+	//计算压强系数
+	//double Cp[n+1];
+	double *Cp = (double *)malloc((n+1)*sizeof(double));
+	for(int i=1;i<=n;i++)
+	{
+		Cp[i]=1.0-pow((Voo[i]/V),2);
+		
+	}
+	//计算误差
+	double dealt=0.0;
+	for(int i=1;i<=n;i++)
+	{
+		dealt=dealt+std::abs(Cp[i]-(1-4.0*sin(wi[i])*sin(wi[i])));			
+	} 
+	dealt=dealt/n/4.0*100.0;
+	cout<<"平均相对误差为： "<<dealt<<" %"<<endl;	
+	//输出数据文件 
+	ofstream out;
+	out.open("shuju_lgh.csv");
+	out<<"角度"<<","<<"压强系数"<<endl;
+	for(int i=1;i<=n;i++)
+	{
+		if(wi[i]>2.0*pi)
+		{
+			wi[i]=wi[i]-2.0*pi;
+		}
+		out<<wi[i]<<","<<Cp[i]<<endl;
+	}
+	out.close(); 
+	
+	
+	//释放内存	
+	free(wi);	
+	free(yy);
+	free(chre);
+	free(Voo);
+	free(Cp);
+	//显示时间
+	finish=clock();
+    totaltime=(double)(finish-start)/CLOCKS_PER_SEC;
+    cout<<"\n计算所用时间: "<<totaltime<<"秒。"<<endl; 
+	system("pause"); 
+	return 0;
+}
+
+
